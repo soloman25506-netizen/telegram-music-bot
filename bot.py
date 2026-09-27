@@ -2,7 +2,7 @@ import os
 import ast
 import operator
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application, MessageHandler, ContextTypes, filters
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
@@ -17,8 +17,14 @@ OPERATORS = {
     ast.UAdd: operator.pos,
 }
 
+
 def calculate(expression):
-    expression = expression.replace("×", "*").replace("÷", "/").replace("^", "**")
+    expression = (
+        expression
+        .replace("×", "*")
+        .replace("÷", "/")
+        .replace("^", "**")
+    )
 
     def evaluate(node):
         if isinstance(node, ast.Expression):
@@ -28,69 +34,62 @@ def calculate(expression):
             return node.value
 
         if isinstance(node, ast.BinOp) and type(node.op) in OPERATORS:
-            left = evaluate(node.left)
-            right = evaluate(node.right)
-            return OPERATORS[type(node.op)](left, right)
+            return OPERATORS[type(node.op)](
+                evaluate(node.left),
+                evaluate(node.right)
+            )
 
         if isinstance(node, ast.UnaryOp) and type(node.op) in OPERATORS:
-            return OPERATORS[type(node.op)](evaluate(node.operand))
+            return OPERATORS[type(node.op)](
+                evaluate(node.operand)
+            )
 
-        raise ValueError("Invalid expression")
+        raise ValueError()
 
     tree = ast.parse(expression, mode="eval")
     return evaluate(tree)
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🧮 Calculator Bot\n\n"
-        "တွက်ချင်တာကို /calc နောက်မှာရေးပါ။\n\n"
-        "ဥပမာများ:\n"
-        "/calc 100+200\n"
-        "/calc 500*3\n"
-        "/calc (100+50)*2\n"
-        "/calc 1000/4\n"
-        "/calc 25%*800"
-    )
+async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
 
+    # Calculator expression မဟုတ်ရင် မတုံ့ပြန်
+    allowed = "0123456789+-*/().%^×÷ "
 
-async def calc(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text(
-            "🧮 ဥပမာ — /calc 100+200"
-        )
+    if not text or any(char not in allowed for char in text):
         return
 
-    expression = "".join(context.args)
+    # အနည်းဆုံး ဂဏန်းတစ်လုံး ပါရမယ်
+    if not any(char.isdigit() for char in text):
+        return
 
     try:
-        result = calculate(expression)
+        result = calculate(text)
 
         if isinstance(result, float) and result.is_integer():
             result = int(result)
 
-        await update.message.reply_text(
-            f"🧮 {expression} = {result}"
-        )
+        await update.message.reply_text(str(result))
 
     except ZeroDivisionError:
-        await update.message.reply_text("❌ 0 နဲ့စားလို့မရပါ။")
+        await update.message.reply_text("❌ 0 နဲ့ စားလို့မရပါ")
 
     except Exception:
-        await update.message.reply_text(
-            "❌ တွက်ချက်မှု မမှန်ပါ။\n"
-            "ဥပမာ — /calc 100+200*3"
-        )
+        return
 
 
 def main():
     if not BOT_TOKEN:
-        raise ValueError("BOT_TOKEN မတွေ့ပါ။ Railway Variables မှာ ထည့်ပါ။")
+        raise ValueError("BOT_TOKEN မတွေ့ပါ")
 
     app = Application.builder().token(BOT_TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("calc", calc))
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            message_handler
+        )
+    )
 
     print("Calculator Bot is running...")
     app.run_polling()
